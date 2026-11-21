@@ -1,0 +1,460 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>S&amp;P 500 한눈에 보기 — PER · 성장률</title>
+<style>
+:root {
+  color-scheme: light;
+  --bg: #f4f4f2;
+  --surface: #fcfcfb;
+  --surface-2: #f0efec;
+  --border: #e3e2de;
+  --text: #0b0b0b;
+  --text-2: #52514e;
+  --text-3: #85847f;
+  --grid: #e6e5e1;
+  --accent: #2a78d6;
+  --series-1: #2a78d6;  /* 매출 */
+  --series-2: #eb6834;  /* 순이익 */
+  --series-3: #1baf7a;  /* EPS */
+  --up: #0a7a35;
+  --down: #c5302f;
+  --hover: #eef4fc;
+}
+@media (prefers-color-scheme: dark) {
+  :root {
+    color-scheme: dark;
+    --bg: #111110;
+    --surface: #1a1a19;
+    --surface-2: #232321;
+    --border: #2f2f2c;
+    --text: #f0efec;
+    --text-2: #c3c2b7;
+    --text-3: #8d8c85;
+    --grid: #2c2c29;
+    --accent: #3987e5;
+    --series-1: #3987e5;
+    --series-2: #d95926;
+    --series-3: #199e70;
+    --up: #3ec46d;
+    --down: #ff7a70;
+    --hover: #1f2a38;
+  }
+}
+* { box-sizing: border-box; }
+body {
+  margin: 0; background: var(--bg); color: var(--text);
+  font: 14px/1.45 -apple-system, BlinkMacSystemFont, "Apple SD Gothic Neo", "Pretendard", "Noto Sans KR", "Segoe UI", sans-serif;
+  -webkit-font-smoothing: antialiased;
+}
+.wrap { max-width: 1400px; margin: 0 auto; padding: 20px 16px 48px; }
+header { display: flex; flex-wrap: wrap; align-items: baseline; gap: 6px 16px; margin-bottom: 14px; }
+h1 { font-size: 22px; margin: 0; letter-spacing: -0.02em; }
+.sub { color: var(--text-3); font-size: 13px; }
+.num { font-variant-numeric: tabular-nums; }
+
+/* 요약 타일 */
+.tiles { display: grid; grid-template-columns: repeat(auto-fit, minmax(150px, 1fr)); gap: 10px; margin-bottom: 14px; }
+.tile { background: var(--surface); border: 1px solid var(--border); border-radius: 10px; padding: 10px 14px; }
+.tile .k { color: var(--text-2); font-size: 12px; }
+.tile .v { font-size: 22px; font-weight: 650; letter-spacing: -0.02em; margin-top: 2px; }
+
+/* 필터 */
+.controls { display: flex; flex-wrap: wrap; gap: 8px; align-items: center; margin-bottom: 12px; }
+input[type=search], select {
+  height: 36px; border: 1px solid var(--border); border-radius: 8px; padding: 0 12px;
+  background: var(--surface); color: var(--text); font: inherit;
+}
+input[type=search] { width: 220px; }
+.chips { display: flex; flex-wrap: wrap; gap: 6px; }
+.chip {
+  height: 32px; padding: 0 12px; border-radius: 16px; border: 1px solid var(--border);
+  background: var(--surface); color: var(--text-2); font: inherit; font-size: 13px; cursor: pointer;
+}
+.chip[aria-pressed=true] { background: var(--accent); border-color: var(--accent); color: #fff; }
+label.toggle { display: inline-flex; align-items: center; gap: 6px; color: var(--text-2); font-size: 13px; cursor: pointer; }
+.count { margin-left: auto; color: var(--text-3); font-size: 13px; }
+
+/* 표 */
+.table-box { background: var(--surface); border: 1px solid var(--border); border-radius: 10px; overflow: auto; max-height: calc(100vh - 120px); }
+table { border-collapse: separate; border-spacing: 0; width: 100%; min-width: 1100px; }
+th, td { padding: 8px 10px; text-align: right; white-space: nowrap; border-bottom: 1px solid var(--border); }
+th {
+  position: sticky; top: 0; z-index: 2; background: var(--surface-2); color: var(--text-2);
+  font-size: 12px; font-weight: 600; cursor: pointer; user-select: none;
+}
+th:hover { color: var(--text); }
+th .arr { color: var(--accent); margin-left: 2px; }
+th:first-child, td:first-child { text-align: left; position: sticky; left: 0; z-index: 1; background: var(--surface); }
+th:first-child { z-index: 3; background: var(--surface-2); }
+td.l { text-align: left; }
+tbody tr { cursor: pointer; }
+tbody tr:hover td { background: var(--hover); }
+.tk { font-weight: 650; }
+.nm { color: var(--text-3); font-size: 12px; max-width: 180px; overflow: hidden; text-overflow: ellipsis; display: block; }
+.sec { color: var(--text-2); font-size: 12px; }
+.up { color: var(--up); }
+.down { color: var(--down); }
+.na { color: var(--text-3); }
+.pe-badge { display: inline-block; min-width: 46px; padding: 1px 6px; border-radius: 6px; }
+svg.spark { display: block; }
+
+/* 상세 패널 */
+dialog {
+  width: min(920px, 96vw); max-height: 92vh; border: 1px solid var(--border); border-radius: 14px;
+  background: var(--surface); color: var(--text); padding: 0;
+}
+dialog::backdrop { background: rgba(0,0,0,.45); }
+.dlg-head { display: flex; align-items: flex-start; gap: 12px; padding: 18px 20px 6px; }
+.dlg-head h2 { margin: 0; font-size: 20px; }
+.dlg-head .close { margin-left: auto; background: none; border: 0; color: var(--text-2); font-size: 26px; line-height: 1; cursor: pointer; }
+.dlg-body { padding: 4px 20px 20px; overflow: auto; }
+.kv { display: grid; grid-template-columns: repeat(auto-fit, minmax(130px, 1fr)); gap: 8px; margin: 10px 0 16px; }
+.kv div { background: var(--surface-2); border-radius: 8px; padding: 8px 12px; }
+.kv .k { color: var(--text-2); font-size: 12px; }
+.kv .v { font-size: 17px; font-weight: 650; }
+.seg { display: inline-flex; border: 1px solid var(--border); border-radius: 8px; overflow: hidden; margin-bottom: 8px; }
+.seg button { border: 0; background: var(--surface); color: var(--text-2); padding: 6px 14px; font: inherit; font-size: 13px; cursor: pointer; }
+.seg button[aria-pressed=true] { background: var(--accent); color: #fff; }
+.charts { display: grid; grid-template-columns: repeat(auto-fit, minmax(270px, 1fr)); gap: 14px; }
+.chart h3 { font-size: 13px; margin: 0 0 4px; color: var(--text-2); font-weight: 600; display: flex; align-items: center; gap: 6px; }
+.chart h3 i { width: 10px; height: 10px; border-radius: 2px; display: inline-block; }
+.chart svg { width: 100%; height: 190px; display: block; overflow: visible; }
+.chart text { fill: var(--text-3); font-size: 10.5px; }
+.note { color: var(--text-3); font-size: 12px; margin-top: 12px; }
+.tip {
+  position: fixed; pointer-events: none; z-index: 100; background: var(--text); color: var(--surface);
+  padding: 6px 9px; border-radius: 6px; font-size: 12px; white-space: nowrap; display: none;
+}
+details.help { margin-top: 18px; color: var(--text-2); font-size: 13px; }
+details.help summary { cursor: pointer; font-weight: 600; }
+details.help dl { display: grid; grid-template-columns: max-content 1fr; gap: 4px 14px; }
+details.help dt { font-weight: 600; color: var(--text); }
+details.help dd { margin: 0; }
+footer { color: var(--text-3); font-size: 12px; margin-top: 18px; }
+footer a { color: inherit; }
+
+@media (max-width: 640px) {
+  .wrap { padding: 14px 10px 40px; }
+  input[type=search] { width: 100%; }
+  .count { margin-left: 0; width: 100%; }
+  .tile .v { font-size: 18px; }
+}
+</style>
+</head>
+<body>
+<div class="wrap">
+  <header>
+    <h1>S&amp;P 500 한눈에 보기</h1>
+    <span class="sub" id="updated">데이터 불러오는 중…</span>
+  </header>
+
+  <section class="tiles" id="tiles" aria-label="현재 목록 요약"></section>
+
+  <div class="controls">
+    <input type="search" id="q" placeholder="티커·회사명 검색 (예: AAPL, Apple)" aria-label="검색">
+    <select id="sector" aria-label="섹터"><option value="">전체 섹터</option></select>
+    <div class="chips" id="presets" role="group" aria-label="빠른 필터"></div>
+    <label class="toggle"><input type="checkbox" id="hideLoss"> 적자 기업 제외</label>
+    <span class="count" id="count"></span>
+  </div>
+
+  <div class="table-box">
+    <table>
+      <thead><tr id="thead"></tr></thead>
+      <tbody id="tbody"></tbody>
+    </table>
+  </div>
+
+  <details class="help">
+    <summary>용어 설명</summary>
+    <dl>
+      <dt>PER</dt><dd>주가 ÷ 최근 12개월(TTM) 주당순이익. 낮을수록 이익 대비 주가가 싸다는 뜻. 적자 기업은 표시하지 않음.</dd>
+      <dt>TTM</dt><dd>최근 4개 분기 합계 (Trailing Twelve Months).</dd>
+      <dt>매출·순이익·EPS 성장</dt><dd>최근 12개월 값을 1년 전 같은 기간 12개월 값과 비교한 증가율. 1년 전이 적자면 계산하지 않음.</dd>
+      <dt>3년 CAGR</dt><dd>최근 회계연도 매출과 3년 전 매출을 비교한 연평균 성장률.</dd>
+      <dt>영업이익률</dt><dd>영업이익 ÷ 매출 (TTM).</dd>
+      <dt>시가총액</dt><dd>PER × 순이익(또는 주가 × 발행주식수)으로 추정. 금액 단위는 미국 달러.</dd>
+    </dl>
+  </details>
+
+  <footer>
+    데이터: 재무 — 미국 SEC EDGAR 공시(XBRL), 주가 — Yahoo Finance, 종목 목록 — Wikipedia. 매일 자동 갱신.
+    공시 원본을 자동으로 가공한 값이라 일부 기업(특히 금융·리츠)은 누락되거나 실제와 다를 수 있습니다. 투자 판단의 참고용으로만 사용하세요.
+  </footer>
+</div>
+
+<dialog id="dlg" aria-labelledby="dlgTitle">
+  <div class="dlg-head">
+    <div>
+      <h2 id="dlgTitle"></h2>
+      <div class="sub" id="dlgSub"></div>
+    </div>
+    <button class="close" id="dlgClose" aria-label="닫기">×</button>
+  </div>
+  <div class="dlg-body">
+    <div class="kv" id="dlgKv"></div>
+    <div class="seg" role="group" aria-label="기간">
+      <button data-p="annual" aria-pressed="true">연간</button>
+      <button data-p="quarterly" aria-pressed="false">분기</button>
+    </div>
+    <div class="charts" id="charts"></div>
+    <div class="note" id="dlgNote"></div>
+  </div>
+</dialog>
+<div class="tip" id="tip"></div>
+
+<script>
+"use strict";
+const $ = (s) => document.querySelector(s);
+let ALL = [], VIEW = [];
+let sortKey = "mcap", sortDir = -1, preset = "all", period = "annual", current = null;
+
+// ---------- 숫자 포맷 ----------
+function money(v) {
+  if (v == null) return "–";
+  const a = Math.abs(v), s = v < 0 ? "−" : "";
+  if (a >= 1e12) return `${s}$${(a / 1e12).toFixed(2)}조`;
+  if (a >= 1e8) return `${s}$${Math.round(a / 1e8).toLocaleString()}억`;
+  if (a >= 1e4) return `${s}$${Math.round(a / 1e4).toLocaleString()}만`;
+  return `${s}$${a.toLocaleString()}`;
+}
+const pct = (v, d = 1) => v == null ? null : `${v > 0 ? "+" : v < 0 ? "−" : ""}${Math.abs(v * 100).toFixed(d)}%`;
+function pctCell(v, plain) {
+  if (v == null) return `<span class="na">–</span>`;
+  if (Math.abs(v) >= 10) return `<span class="${v > 0 ? "up" : "down"}">${v > 0 ? "+" : "−"}${Math.round(Math.abs(v) * 100).toLocaleString()}%</span>`;
+  const t = plain ? `${(v * 100).toFixed(1)}%` : pct(v);
+  return plain ? t : `<span class="${v > 0 ? "up" : v < 0 ? "down" : ""}">${t}</span>`;
+}
+const price = (v) => v == null ? "–" : `$${v.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
+const median = (arr) => {
+  const a = arr.filter((x) => x != null && isFinite(x)).sort((x, y) => x - y);
+  if (!a.length) return null;
+  const m = a.length >> 1;
+  return a.length % 2 ? a[m] : (a[m - 1] + a[m]) / 2;
+};
+const esc = (s) => String(s).replace(/[&<>"']/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
+
+// ---------- 섹터 한글명 ----------
+const SECTOR_KO = {
+  "Information Technology": "IT", "Health Care": "헬스케어", "Financials": "금융",
+  "Consumer Discretionary": "경기소비재", "Communication Services": "커뮤니케이션", "Industrials": "산업재",
+  "Consumer Staples": "필수소비재", "Energy": "에너지", "Utilities": "유틸리티", "Real Estate": "부동산", "Materials": "소재",
+};
+const sectorKo = (s) => SECTOR_KO[s] || s;
+
+// ---------- 컬럼 ----------
+const COLS = [
+  { k: "t", label: "종목", cell: (r) => `<span class="tk">${esc(r.t)}</span><span class="nm" title="${esc(r.n)}">${esc(r.n)}</span>` },
+  { k: "s", label: "섹터", cls: "l", cell: (r) => `<span class="sec">${esc(sectorKo(r.s))}</span>` },
+  { k: "price", label: "주가", cell: (r) => price(r.price) },
+  { k: "chg1y", label: "1년 수익률", cell: (r) => pctCell(r.chg1y) },
+  { k: "spark", label: "1년 추이", sort: false, cell: (r) => spark(r.spark) },
+  { k: "mcap", label: "시가총액", cell: (r) => money(r.mcap) },
+  { k: "pe", label: "PER", cell: (r) => r.pe == null ? `<span class="na">${r.ni != null && r.ni < 0 ? "적자" : "–"}</span>` : r.pe.toFixed(1) },
+  { k: "rev", label: "매출(TTM)", cell: (r) => money(r.rev) },
+  { k: "revG", label: "매출 성장", cell: (r) => pctCell(r.revG) },
+  { k: "niG", label: "순이익 성장", cell: (r) => pctCell(r.niG) },
+  { k: "epsG", label: "EPS 성장", cell: (r) => pctCell(r.epsG) },
+  { k: "opM", label: "영업이익률", cell: (r) => pctCell(r.opM, true) },
+  { k: "rev3y", label: "3년 매출 CAGR", cell: (r) => pctCell(r.rev3y) },
+];
+
+const PRESETS = [
+  { id: "all", label: "전체", f: () => true },
+  { id: "value", label: "저PER (15 미만)", f: (r) => r.pe != null && r.pe < 15 },
+  { id: "growth", label: "고성장 (매출 +20%↑)", f: (r) => r.revG != null && r.revG >= 0.2 },
+  { id: "garp", label: "성장+적정가 (PER<25, 매출+10%↑, 이익+10%↑)", f: (r) => r.pe != null && r.pe < 25 && r.revG >= 0.1 && r.niG >= 0.1 },
+  { id: "quality", label: "고수익 (영업이익률 30%↑)", f: (r) => r.opM != null && r.opM >= 0.3 },
+];
+
+// ---------- 스파크라인 ----------
+function spark(vals) {
+  if (!vals || vals.length < 2) return `<span class="na">–</span>`;
+  const w = 80, h = 22, min = Math.min(...vals), max = Math.max(...vals), rng = max - min || 1;
+  const pts = vals.map((v, i) => `${(i / (vals.length - 1) * w).toFixed(1)},${(h - 2 - (v - min) / rng * (h - 4)).toFixed(1)}`).join(" ");
+  const up = vals[vals.length - 1] >= vals[0];
+  return `<svg class="spark" width="${w}" height="${h}" aria-hidden="true"><polyline points="${pts}" fill="none" stroke="var(${up ? "--up" : "--down"})" stroke-width="1.5" stroke-linejoin="round"/></svg>`;
+}
+
+// ---------- 렌더 ----------
+function renderHead() {
+  $("#thead").innerHTML = COLS.map((c) => {
+    const arr = c.k === sortKey ? `<span class="arr">${sortDir < 0 ? "▼" : "▲"}</span>` : "";
+    return `<th data-k="${c.k}" ${c.sort === false ? 'style="cursor:default"' : ""} aria-sort="${c.k === sortKey ? (sortDir < 0 ? "descending" : "ascending") : "none"}">${c.label}${arr}</th>`;
+  }).join("");
+}
+
+function apply() {
+  const q = $("#q").value.trim().toLowerCase();
+  const sec = $("#sector").value;
+  const hideLoss = $("#hideLoss").checked;
+  const pf = PRESETS.find((p) => p.id === preset).f;
+  VIEW = ALL.filter((r) =>
+    (!q || r.t.toLowerCase().includes(q) || r.n.toLowerCase().includes(q)) &&
+    (!sec || r.s === sec) && (!hideLoss || (r.ni != null && r.ni > 0)) && pf(r));
+  VIEW.sort((a, b) => {
+    const x = a[sortKey], y = b[sortKey];
+    if (x == null && y == null) return 0;
+    if (x == null) return 1;   // 값 없는 종목은 항상 아래로
+    if (y == null) return -1;
+    return (typeof x === "string" ? x.localeCompare(y) : x - y) * sortDir;
+  });
+  renderHead();
+  $("#tbody").innerHTML = VIEW.map((r, i) =>
+    `<tr data-i="${i}">${COLS.map((c) => `<td class="num ${c.cls || ""}">${c.cell(r)}</td>`).join("")}</tr>`).join("");
+  $("#count").textContent = `${VIEW.length.toLocaleString()}개 기업`;
+  renderTiles();
+}
+
+function renderTiles() {
+  const pos = VIEW.filter((r) => r.pe != null);
+  const tiles = [
+    ["기업 수", VIEW.length.toLocaleString()],
+    ["PER 중앙값", median(pos.map((r) => r.pe))?.toFixed(1) ?? "–"],
+    ["매출 성장 중앙값", pct(median(VIEW.map((r) => r.revG))) ?? "–"],
+    ["순이익 성장 중앙값", pct(median(VIEW.map((r) => r.niG))) ?? "–"],
+    ["영업이익률 중앙값", median(VIEW.map((r) => r.opM)) == null ? "–" : `${(median(VIEW.map((r) => r.opM)) * 100).toFixed(1)}%`],
+  ];
+  $("#tiles").innerHTML = tiles.map(([k, v]) => `<div class="tile"><div class="k">${k}</div><div class="v num">${v}</div></div>`).join("");
+}
+
+// ---------- 상세 차트 ----------
+const tip = $("#tip");
+function showTip(e, html) {
+  tip.innerHTML = html; tip.style.display = "block";
+  const r = tip.getBoundingClientRect();
+  let x = e.clientX + 12, y = e.clientY - r.height - 10;
+  if (x + r.width > innerWidth - 8) x = e.clientX - r.width - 12;
+  if (y < 8) y = e.clientY + 14;
+  tip.style.left = x + "px"; tip.style.top = y + "px";
+}
+const hideTip = () => { tip.style.display = "none"; };
+
+function niceTicks(min, max, n = 4) {
+  if (min === max) { max = min + 1; }
+  const span = max - min, step0 = span / n, mag = 10 ** Math.floor(Math.log10(step0));
+  const step = [1, 2, 2.5, 5, 10].map((m) => m * mag).find((s) => span / s <= n) || mag * 10;
+  const lo = Math.floor(min / step) * step, hi = Math.ceil(max / step) * step, out = [];
+  for (let v = lo; v <= hi + step / 2; v += step) out.push(+v.toFixed(10));
+  return out;
+}
+
+function barChart(title, color, labels, vals, fmt, tipLabel) {
+  const W = 420, H = 190, L = 54, R = 6, T = 8, B = 24;
+  const have = vals.filter((v) => v != null);
+  if (!have.length) return `<div class="chart"><h3><i style="background:${color}"></i>${title}</h3><p class="na">데이터 없음</p></div>`;
+  const ticks = niceTicks(Math.min(0, ...have), Math.max(0, ...have));
+  const y0 = ticks[0], y1 = ticks[ticks.length - 1];
+  const y = (v) => T + (1 - (v - y0) / (y1 - y0)) * (H - T - B);
+  const n = labels.length, slot = (W - L - R) / n, bw = Math.max(4, Math.min(34, slot - 6));
+  let g = "";
+  for (const t of ticks) {
+    g += `<line x1="${L}" x2="${W - R}" y1="${y(t)}" y2="${y(t)}" stroke="var(--grid)" stroke-width="${t === 0 ? 1.4 : 1}"/>`;
+    g += `<text x="${L - 6}" y="${y(t) + 3.5}" text-anchor="end">${fmt(t, true)}</text>`;
+  }
+  const step = Math.ceil(n / 8);
+  labels.forEach((lb, i) => {
+    const cx = L + slot * (i + 0.5), v = vals[i];
+    if (i % step === 0 || i === n - 1) g += `<text x="${cx}" y="${H - 6}" text-anchor="middle">${lb.short}</text>`;
+    if (v != null) {
+      const top = y(Math.max(v, 0)), bot = y(Math.min(v, 0)), hgt = Math.max(1, bot - top), r = Math.min(4, hgt / 2, bw / 2);
+      // 값 쪽(끝)만 둥글게, 기준선 쪽은 평평하게
+      const x0 = cx - bw / 2, x1 = cx + bw / 2;
+      const d = v >= 0
+        ? `M${x0},${bot}V${top + r}Q${x0},${top} ${x0 + r},${top}H${x1 - r}Q${x1},${top} ${x1},${top + r}V${bot}Z`
+        : `M${x0},${top}V${bot - r}Q${x0},${bot} ${x0 + r},${bot}H${x1 - r}Q${x1},${bot} ${x1},${bot - r}V${top}Z`;
+      g += `<path d="${d}" fill="${color}" opacity="${v < 0 ? 0.55 : 1}"/>`;
+    }
+    // 마우스 감지 영역은 막대보다 넓게
+    g += `<rect x="${L + slot * i}" y="${T}" width="${slot}" height="${H - T - B}" fill="transparent" data-tip="${esc(`${lb.full}<br><b>${tipLabel}: ${v == null ? "없음" : fmt(v)}</b>`)}"/>`;
+  });
+  return `<div class="chart"><h3><i style="background:${color}"></i>${title}</h3>
+    <svg viewBox="0 0 ${W} ${H}" preserveAspectRatio="none" role="img" aria-label="${title}">${g}</svg></div>`;
+}
+
+const axisMoney = (v, axis) => {
+  if (!axis) return money(v);
+  const a = Math.abs(v), s = v < 0 ? "−" : "";
+  if (a >= 1e12) return `${s}${+(a / 1e12).toFixed(1)}조`;
+  if (a >= 1e8) return `${s}${Math.round(a / 1e8).toLocaleString()}억`;
+  return v === 0 ? "0" : `${s}${Math.round(a / 1e4).toLocaleString()}만`;
+};
+const axisEps = (v) => `$${(+v.toFixed(2)).toLocaleString()}`;
+
+function renderCharts() {
+  const r = current, src = r[period];
+  if (!src || !src.end || !src.end.length) { $("#charts").innerHTML = `<p class="na">재무 데이터가 없습니다.</p>`; return; }
+  const labels = src.end.map((e) => {
+    const [yy, mm] = e.split("-");
+    return period === "annual"
+      ? { short: `'${yy.slice(2)}`, full: `회계연도 (${yy}.${mm} 결산)` }
+      : { short: `${yy.slice(2)}.${mm}`, full: `${yy}.${mm} 마감 분기` };
+  });
+  let html = barChart("매출", "var(--series-1)", labels, src.rev, axisMoney, "매출")
+           + barChart("순이익", "var(--series-2)", labels, src.ni, axisMoney, "순이익");
+  if (period === "annual") html += barChart("EPS (주당순이익, 희석)", "var(--series-3)", labels, src.eps, axisEps, "EPS");
+  $("#charts").innerHTML = html;
+}
+
+function openDetail(r) {
+  current = r;
+  $("#dlgTitle").textContent = `${r.t} · ${r.n}`;
+  $("#dlgSub").textContent = `${sectorKo(r.s)} / ${r.sub}`;
+  const kv = [
+    ["주가", price(r.price)], ["1년 수익률", pct(r.chg1y) ?? "–"], ["시가총액", money(r.mcap)],
+    ["PER", r.pe?.toFixed(1) ?? (r.ni < 0 ? "적자" : "–")], ["EPS (TTM)", r.eps == null ? "–" : `$${r.eps.toFixed(2)}`],
+    ["매출 (TTM)", money(r.rev)], ["매출 성장", pct(r.revG) ?? "–"],
+    ["순이익 (TTM)", money(r.ni)], ["순이익 성장", pct(r.niG) ?? "–"],
+    ["영업이익률", r.opM == null ? "–" : `${(r.opM * 100).toFixed(1)}%`], ["순이익률", r.netM == null ? "–" : `${(r.netM * 100).toFixed(1)}%`],
+    ["52주 고점 대비", r.hi52 && r.price ? pct(r.price / r.hi52 - 1) : "–"],
+  ];
+  $("#dlgKv").innerHTML = kv.map(([k, v]) => `<div><div class="k">${k}</div><div class="v num">${v}</div></div>`).join("");
+  $("#dlgNote").textContent = r.asOf ? `재무 기준: ${r.asOf.replace(/-/g, ".")} 마감 분기까지의 SEC 공시` : "";
+  renderCharts();
+  $("#dlg").showModal();
+}
+
+// ---------- 이벤트 ----------
+$("#thead").addEventListener("click", (e) => {
+  const th = e.target.closest("th"); if (!th) return;
+  const c = COLS.find((x) => x.k === th.dataset.k); if (!c || c.sort === false) return;
+  if (sortKey === c.k) sortDir *= -1; else { sortKey = c.k; sortDir = (c.k === "t" || c.k === "s" || c.k === "pe") ? 1 : -1; }
+  apply();
+});
+$("#tbody").addEventListener("click", (e) => { const tr = e.target.closest("tr"); if (tr) openDetail(VIEW[+tr.dataset.i]); });
+let qTimer; $("#q").addEventListener("input", () => { clearTimeout(qTimer); qTimer = setTimeout(apply, 120); });
+$("#sector").addEventListener("change", apply);
+$("#hideLoss").addEventListener("change", apply);
+$("#presets").addEventListener("click", (e) => {
+  const b = e.target.closest("button"); if (!b) return;
+  preset = b.dataset.id;
+  document.querySelectorAll("#presets button").forEach((x) => x.setAttribute("aria-pressed", x === b));
+  apply();
+});
+document.querySelectorAll(".seg button").forEach((b) => b.addEventListener("click", () => {
+  period = b.dataset.p;
+  document.querySelectorAll(".seg button").forEach((x) => x.setAttribute("aria-pressed", x === b));
+  renderCharts();
+}));
+$("#dlgClose").addEventListener("click", () => $("#dlg").close());
+$("#dlg").addEventListener("click", (e) => { if (e.target === $("#dlg")) $("#dlg").close(); });
+$("#dlg").addEventListener("close", hideTip);
+$("#charts").addEventListener("mousemove", (e) => { const t = e.target.dataset?.tip; t ? showTip(e, t) : hideTip(); });
+$("#charts").addEventListener("mouseleave", hideTip);
+
+// ---------- 시작 ----------
+$("#presets").innerHTML = PRESETS.map((p) => `<button class="chip" data-id="${p.id}" aria-pressed="${p.id === preset}">${p.label}</button>`).join("");
+fetch("data.json", { cache: "no-cache" }).then((r) => r.json()).then((d) => {
+  ALL = d.companies;
+  const dt = new Date(d.updated.replace("Z", ":00Z"));
+  $("#updated").textContent = `S&P 500 ${d.count}개 기업 · ${dt.toLocaleString("ko-KR", { dateStyle: "medium", timeStyle: "short" })} 업데이트`;
+  const sectors = [...new Set(ALL.map((r) => r.s))].sort((a, b) => sectorKo(a).localeCompare(sectorKo(b), "ko"));
+  $("#sector").insertAdjacentHTML("beforeend", sectors.map((s) => `<option value="${esc(s)}">${esc(sectorKo(s))}</option>`).join(""));
+  apply();
+}).catch((err) => { $("#updated").textContent = "데이터를 불러오지 못했습니다: " + err; });
+</script>
+</body>
+</html>
