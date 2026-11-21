@@ -9,7 +9,8 @@
 <script>
   // PC 버전 보기: 저장된 선택이 있으면 그것을, 없으면 화면 폭으로 결정
   (function () {
-    var m = localStorage.getItem("mode") || (screen.width >= 900 ? "pc" : "mobile");
+    var saved = null; try { saved = localStorage.getItem("mode"); } catch (e) {}
+    var m = saved || (screen.width >= 900 ? "pc" : "mobile");
     document.documentElement.dataset.mode = m;
     if (m === "pc" && screen.width < 900) document.getElementById("vp").setAttribute("content", "width=1200");
   })();
@@ -242,10 +243,14 @@ let ALL = [], BY_T = {}, SECTORS = [], META = {};
 const ui = { sort: "score", yMetric: "revG", period: "annual" };
 
 // ---------------- 관심 종목 (휴대폰에 저장) ----------------
-const watch = new Set(JSON.parse(localStorage.getItem("watch") || "[]"));
+const store = {
+  get(k, d) { try { return JSON.parse(localStorage.getItem(k)) ?? d; } catch (e) { return d; } },
+  set(k, v) { try { localStorage.setItem(k, JSON.stringify(v)); } catch (e) { /* 저장 불가 환경: 이번 방문 동안만 유지 */ } },
+};
+const watch = new Set(store.get("watch", []));
 function toggleWatch(t) {
   watch.has(t) ? watch.delete(t) : watch.add(t);
-  localStorage.setItem("watch", JSON.stringify([...watch]));
+  store.set("watch", [...watch]);
   document.querySelectorAll(`.star[data-t="${CSS.escape(t)}"]`).forEach((b) => {
     b.classList.toggle("on", watch.has(t)); b.textContent = watch.has(t) ? "★" : "☆";
     b.setAttribute("aria-label", watch.has(t) ? "관심 종목에서 빼기" : "관심 종목에 추가");
@@ -726,7 +731,7 @@ document.addEventListener("scroll", hideTip, { passive: true });
 
 // ---------------- PC/모바일 전환 ----------------
 $("#modeBtn").textContent = PC ? "📱 모바일 버전으로 보기" : "🖥️ PC 버전으로 보기";
-$("#modeBtn").onclick = () => { localStorage.setItem("mode", PC ? "mobile" : "pc"); location.reload(); };
+$("#modeBtn").onclick = () => { try { localStorage.setItem("mode", PC ? "mobile" : "pc"); } catch (e) {} location.reload(); };
 
 // ---------------- 시작 ----------------
 renderTabs();
