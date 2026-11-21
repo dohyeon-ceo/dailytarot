@@ -32,7 +32,7 @@ PRICE_DELAY = 0.6  # 주가 요청 사이 간격(초). 서버에 부담 주지 �
 
 WIKI_URL = "https://en.wikipedia.org/wiki/List_of_S%26P_500_companies"
 FACTS_URL = "https://data.sec.gov/api/xbrl/companyfacts/CIK{cik}.json"
-CHART_URL = "https://query1.finance.yahoo.com/v8/finance/chart/{sym}?range=1y&interval=1wk"
+CHART_URL = "https://query1.finance.yahoo.com/v8/finance/chart/{sym}?range=1y&interval=1wk&events=split"
 
 # 항목별 XBRL 태그 후보 (회사마다, 연도마다 쓰는 태그가 다르다)
 CONCEPTS = {
@@ -50,9 +50,6 @@ CONCEPTS = {
     "eps": ["EarningsPerShareDiluted", "EarningsPerShareBasicAndDiluted", "EarningsPerShareBasic"],
 }
 FORMS = {"10-K", "10-K/A", "10-Q", "10-Q/A", "10-KT", "20-F", "40-F"}
-
-# 주당 지표가 다른 클래스 기준으로 보고되는 예외 (BRK는 A주 기준 EPS)
-EPS_DIVISOR = {"BRK.B": 1500}
 
 _sec_lock = threading.Lock()
 _sec_last = [0.0]
@@ -207,16 +204,32 @@ def metric_ttm(per: dict):
     return cur, prev, cur_end, annual, quarters
 
 
-def shares_outstanding(facts: dict):
+def shares_outstanding(facts: dict, ref: str | None):
+    """발행주식수. 표지(dei) 값이 최신이면 그것을, 아니면 최근 분기 희석주식수를 쓴다."""
     items = facts.get("dei", {}).get("EntityCommonStockSharesOutstanding", {}).get("units", {}).get("shares", [])
-    if not items:
-        return None
-    latest = max(items, key=lambda f: (f["filed"], f["end"]))
-    same = {}
-    for f in items:  # 같은 제출본의 여러 주식 클래스를 합산
-        if f["accn"] == latest["accn"]:
-            same[(f["end"], f["val"])] = f["val"]
-    return sum(same.values()) or None
+    if items:
+        latest = max(items, key=lambda f: (f["filed"], f["end"]))
+        if ref is None or abs((d(latest["end"]) - d(ref)).days) <= 200:
+            same = {}
+            for f in items:  # 같은 제출본의 여러 주식 클래스를 합산
+                if f["accn"] == latest["accn"]:
+                    same[(f["end"], f["val"])] = f["val"]
+            return sum(same.values()) or None
+    wa = facts.get("us-gaap", {}).get("WeightedAverageNumberOfDilutedSharesOutstanding", {}).get("units", {}).get("shares", [])
+    wa = [f for f in wa if f.get("form") in FORMS]
+    if wa:
+        latest = max(wa, key=lambda f: (f["end"], f["filed"]))
+        if ref is None or abs((d(latest["end"]) - d(ref)).days) <= 200:
+            return latest["val"]
+    return None
+
+
+def fresh(m, ref: str | None, days: int = 120):
+    """기준일보다 오래된(=더 이상 보고하지 않는 태그) 값은 버린다."""
+    cur, prev, end, annual, quarters = m
+    if end is None or ref is None or (d(ref) - d(end)).days > days:
+        return None, None, None, annual, quarters
+    return m
 
 
 def build_financials(facts: dict) -> dict:
@@ -224,16 +237,21 @@ def build_financials(facts: dict) -> dict:
     eps_unit = lambda u: u.startswith("USD/sh")
     rev = metric_ttm(periods_for(facts, CONCEPTS["rev"], usd))
     ni = metric_ttm(periods_for(facts, CONCEPTS["ni"], usd))
-    op = metric_ttm(periods_for(facts, CONCEPTS["op"], usd))
+    ref = max([x for x in (rev[2], ni[2]) if x], default=None)
+    rev, ni = fresh(rev, ref), fresh(ni, ref)
+    op = fresh(metric_ttm(periods_for(facts, CONCEPTS["op"], usd)), ref)
     eps = metric_ttm(periods_for(facts, CONCEPTS["eps"], eps_unit))
+    # EPS는 순이익과 같은 기간일 때만 사용 (태그/클래스가 꼬인 회사 방지)
+    if ni[2] is None or eps[2] is None or abs((d(eps[2]) - d(ni[2])).days) > 10:
+        eps = (None, None, None, eps[3], eps[4])
 
     out = {
         "rev": rev[0], "revG": growth(rev[0], rev[1]),
         "ni": ni[0], "niG": growth(ni[0], ni[1]),
         "op": op[0],
         "eps": eps[0], "epsG": growth(eps[0], eps[1]),
-        "asOf": max([x for x in (rev[2], ni[2]) if x], default=None),
-        "shares": shares_outstanding(facts),
+        "asOf": ref,
+        "shares": shares_outstanding(facts, ref),
     }
     out["netM"] = ni[0] / rev[0] if ni[0] is not None and rev[0] else None
     out["opM"] = op[0] / rev[0] if op[0] is not None and rev[0] else None
@@ -275,6 +293,9 @@ def fetch_price(ticker: str) -> dict:
         "chg1y": (price / closes[0] - 1) if price and closes and closes[0] else None,
         "hi52": meta.get("fiftyTwoWeekHigh"),
         "spark": [round(c, 2) for c in closes],
+        # 최근 1년 주식분할: [(날짜, 비율)] — 공시 이후 분할이면 EPS를 보정한다
+        "splits": [(datetime.fromtimestamp(v["date"], timezone.utc).date().isoformat(), v["numerator"] / v["denominator"])
+                   for v in (res.get("events") or {}).get("splits", {}).values() if v.get("denominator")],
     }
 
 
@@ -335,16 +356,28 @@ def main() -> int:
         p = prices.get(c["t"], {})
         price = p.get("price")
         eps = f.get("eps")
-        if eps is not None and c["t"] in EPS_DIVISOR:
-            eps = eps / EPS_DIVISOR[c["t"]]
+        shares = f.get("shares")
+        for sd, ratio in p.get("splits", []):
+            if f.get("asOf") and sd > f["asOf"] and ratio > 0:
+                if eps is not None:
+                    eps = eps / ratio
+                if shares:
+                    shares = shares * ratio
+        # EPS와 순이익/주식수가 크게 어긋나면(클래스가 여러 개인 회사 등) 신뢰하지 않음
+        if eps and shares and f.get("ni") and f["ni"] > 0:
+            implied = f["ni"] / shares
+            if not 0.5 <= eps / implied <= 2:
+                eps = None
         pe = price / eps if price and eps and eps > 0 else None
-        if pe is None and eps is None and price and f.get("shares") and f.get("ni") and f["ni"] > 0:
-            pe = price * f["shares"] / f["ni"]  # EPS 태그가 없는 회사: 시가총액 / 순이익
+        if pe is None and eps is None and price and shares and f.get("ni") and f["ni"] > 0:
+            pe = price * shares / f["ni"]  # EPS 태그가 없는 회사: 시가총액 / 순이익
         mcap = None
         if price and f.get("ni") and pe:
             mcap = pe * f["ni"]  # 순이익 × PER = 시가총액 (주식 클래스 문제 회피)
-        elif price and f.get("shares"):
-            mcap = price * f["shares"]
+        elif price and shares:
+            mcap = price * shares
+        if mcap is not None and mcap < 2e9:  # S&P 500 기업이 20억 달러 미만일 리 없음 → 주식수 오류
+            pe = mcap = None
         rows.append({
             "t": c["t"], "n": c["n"], "s": c["s"], "sub": c["sub"],
             "price": rnd(price, 2), "chg1y": rnd(p.get("chg1y")), "hi52": rnd(p.get("hi52"), 2),
