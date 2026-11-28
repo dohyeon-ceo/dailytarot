@@ -1,0 +1,171 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>유튜브 스크립트 추출기</title>
+<style>
+  * { box-sizing: border-box; }
+  body {
+    margin: 0; font-family: -apple-system, BlinkMacSystemFont, "Apple SD Gothic Neo", "Malgun Gothic", sans-serif;
+    background: #f5f5f7; color: #1d1d1f;
+  }
+  main { max-width: 760px; margin: 0 auto; padding: 24px 16px 48px; }
+  h1 { font-size: 22px; margin: 0 0 4px; }
+  p.sub { margin: 0 0 20px; color: #6e6e73; font-size: 14px; }
+  .card { background: #fff; border-radius: 14px; padding: 16px; box-shadow: 0 1px 3px rgba(0,0,0,.08); margin-bottom: 14px; }
+  form { display: flex; gap: 8px; }
+  input[type=text] {
+    flex: 1; min-width: 0; padding: 12px 14px; font-size: 16px; border: 1px solid #d2d2d7; border-radius: 10px;
+  }
+  button {
+    padding: 12px 16px; font-size: 15px; font-weight: 600; border: 0; border-radius: 10px;
+    background: #e60023; color: #fff; cursor: pointer; white-space: nowrap;
+  }
+  button:disabled { opacity: .5; cursor: default; }
+  button.secondary { background: #e8e8ed; color: #1d1d1f; }
+  .options { display: flex; flex-wrap: wrap; gap: 12px 18px; align-items: center; font-size: 14px; margin-bottom: 12px; }
+  select { padding: 6px 8px; font-size: 14px; border-radius: 8px; border: 1px solid #d2d2d7; }
+  label { display: inline-flex; gap: 6px; align-items: center; cursor: pointer; }
+  textarea {
+    width: 100%; height: 50vh; padding: 12px; font-size: 15px; line-height: 1.6;
+    border: 1px solid #d2d2d7; border-radius: 10px; resize: vertical; font-family: inherit;
+  }
+  .row { display: flex; gap: 8px; align-items: center; margin-top: 10px; flex-wrap: wrap; }
+  .meta { font-size: 13px; color: #6e6e73; margin-left: auto; }
+  .title { font-weight: 600; margin: 0 0 10px; }
+  .error { color: #c00; font-size: 14px; margin-top: 10px; }
+  .hidden { display: none; }
+</style>
+</head>
+<body>
+<main>
+  <h1>📝 유튜브 스크립트 추출기</h1>
+  <p class="sub">유튜브 주소를 붙여넣으면 자막을 텍스트로 정리해 줍니다. 복사해서 Claude에 바로 붙여넣으세요.</p>
+
+  <div class="card">
+    <form id="form">
+      <input id="url" type="text" placeholder="https://www.youtube.com/watch?v=..." autocomplete="off" />
+      <button id="go" type="submit">가져오기</button>
+    </form>
+    <div id="error" class="error hidden"></div>
+  </div>
+
+  <div id="result" class="card hidden">
+    <p id="title" class="title"></p>
+    <div class="options">
+      <label>언어 <select id="lang"></select></label>
+      <label><input type="checkbox" id="ts" /> 타임스탬프 포함</label>
+      <label><input type="checkbox" id="prefix" checked /> 제목·안내문 포함</label>
+    </div>
+    <textarea id="out" readonly></textarea>
+    <div class="row">
+      <button id="copy" type="button">📋 전체 복사</button>
+      <button id="download" type="button" class="secondary">💾 .txt 저장</button>
+      <span id="meta" class="meta"></span>
+    </div>
+  </div>
+</main>
+
+<script>
+const $ = (id) => document.getElementById(id);
+let data = null;
+
+function fmtTime(sec) {
+  sec = Math.floor(sec);
+  const h = Math.floor(sec / 3600), m = Math.floor((sec % 3600) / 60), s = sec % 60;
+  const pad = (n) => String(n).padStart(2, '0');
+  return h ? `${h}:${pad(m)}:${pad(s)}` : `${m}:${pad(s)}`;
+}
+
+function buildText() {
+  if (!data) return '';
+  let body;
+  if ($('ts').checked) {
+    body = data.segments.map((s) => `[${fmtTime(s.start)}] ${s.text}`).join('\n');
+  } else {
+    // 타임스탬프 없이: 문장을 이어 붙이고, 8초 이상 끊기거나 약 400자마다 문단 나누기
+    const paras = [];
+    let cur = '';
+    data.segments.forEach((s, i) => {
+      const prev = data.segments[i - 1];
+      const gap = prev ? s.start - prev.start : 0;
+      if (cur && (cur.length > 400 && /[.?!。]$/.test(cur) || gap > 8)) {
+        paras.push(cur); cur = '';
+      }
+      cur += (cur ? ' ' : '') + s.text;
+    });
+    if (cur) paras.push(cur);
+    body = paras.join('\n\n');
+  }
+  if ($('prefix').checked) {
+    const head = `다음은 유튜브 영상 "${data.title}"${data.author ? ` (${data.author})` : ''}의 스크립트입니다.\nhttps://www.youtube.com/watch?v=${data.videoId}\n\n`;
+    body = head + body;
+  }
+  return body;
+}
+
+function render() {
+  const text = buildText();
+  $('out').value = text;
+  $('meta').textContent = `${text.length.toLocaleString()}자`;
+}
+
+async function load(lang) {
+  const url = $('url').value.trim();
+  if (!url) return;
+  $('error').classList.add('hidden');
+  $('go').disabled = true;
+  $('go').textContent = '불러오는 중…';
+  try {
+    const qs = new URLSearchParams({ url });
+    if (lang) qs.set('lang', lang);
+    const res = await fetch('/api/transcript?' + qs);
+    const json = await res.json();
+    if (!res.ok) throw new Error(json.error || '오류가 발생했습니다.');
+    data = json;
+    $('title').textContent = json.title;
+    $('lang').innerHTML = json.tracks
+      .map((t) => `<option value="${t.id}" ${t.id === json.selected ? 'selected' : ''}>${t.name}</option>`)
+      .join('');
+    $('result').classList.remove('hidden');
+    render();
+  } catch (e) {
+    $('error').textContent = e.message;
+    $('error').classList.remove('hidden');
+  } finally {
+    $('go').disabled = false;
+    $('go').textContent = '가져오기';
+  }
+}
+
+$('form').addEventListener('submit', (e) => { e.preventDefault(); load(); });
+$('lang').addEventListener('change', () => load($('lang').value));
+$('ts').addEventListener('change', render);
+$('prefix').addEventListener('change', render);
+
+$('copy').addEventListener('click', async () => {
+  const text = $('out').value;
+  try {
+    await navigator.clipboard.writeText(text);
+  } catch {
+    $('out').select(); document.execCommand('copy');
+  }
+  $('copy').textContent = '✅ 복사됨!';
+  setTimeout(() => ($('copy').textContent = '📋 전체 복사'), 1500);
+});
+
+$('download').addEventListener('click', () => {
+  const blob = new Blob([$('out').value], { type: 'text/plain;charset=utf-8' });
+  const a = document.createElement('a');
+  a.href = URL.createObjectURL(blob);
+  a.download = `${(data?.title || 'transcript').replace(/[\\/:*?"<>|]/g, '_')}.txt`;
+  a.click();
+  URL.revokeObjectURL(a.href);
+});
+
+// 붙여넣기 하면 바로 가져오기
+$('url').addEventListener('paste', () => setTimeout(() => load(), 0));
+</script>
+</body>
+</html>

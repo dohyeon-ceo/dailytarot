@@ -1,0 +1,12 @@
+{
+  "name": "youtube-transcript-copier",
+  "version": "1.0.0",
+  "private": true,
+  "description": "유튜브 주소를 넣으면 스크립트를 텍스트로 정리해 복사할 수 있게 해 주는 사이트",
+  "scripts": {
+    "start": "node server.js"
+  },
+  "engines": {
+    "node": ">=18"
+  }
+}
